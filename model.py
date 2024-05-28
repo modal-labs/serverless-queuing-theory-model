@@ -9,10 +9,10 @@ with image.imports():
     from scipy.optimize import minimize
 
 
-class Data:
+class Params:
     """Various matrices & arrays needed by the code."""
 
-    def __init__(self, Rb, Rs, Ra, eps, max_n_workers=10, max_queue_size=20):
+    def __init__(self, Rb, Rs, Ra, eps, max_n_workers=15, max_queue_size=45):
         self.Rb = Rb
         self.Rs = Rs
         self.Ra = Ra
@@ -20,6 +20,11 @@ class Data:
         self.max_n_workers = max_n_workers
         self.max_queue_size = max_queue_size
         self.state_space_indices = {}
+        for b, i, s, q in self.iterate_indices():
+            self.state_space_indices[(b, i, s, q)] = len(self.state_space_indices)
+        self.S = len(self.state_space_indices)
+        print("Total size of state space:", self.S)
+
 
     def iterate_indices(self):
         for b in range(self.max_n_workers + 1):  # busy
@@ -31,47 +36,42 @@ class Data:
                         if i > 0 and q > 0:  # Never idle workers and queue size
                             continue
                         yield b, i, s, q
-                        
-    def precompute(self):
-        # TODO(erikbern): make this return a separate object
 
+class Data:
+    def __init__(self, params):
         # Precompute state space
-        for b, i, s, q in self.iterate_indices():
-            self.state_space_indices[(b, i, s, q)] = len(self.state_space_indices)
-        self.S = len(self.state_space_indices)
-        print("Total size of state space:", self.S)
 
         def get_index(b, i, s, q):
-            return self.state_space_indices[(b, i, s, q)]
+            return params.state_space_indices[(b, i, s, q)]
 
         # Precompute transition probabilities
-        M = [[0.0] * self.S for i in range(self.S)]
-        for b, i, s, q in self.iterate_indices():
+        M = [[0.0] * params.S for i in range(params.S)]
+        for b, i, s, q in params.iterate_indices():
             z = get_index(b, i, s, q)
             if b > 0 and q > 0:
                 # Busy worker finishes, there are more items in the queue
                 z2 = get_index(b, i, s, q-1)
-                M[z][z2] = self.Rb * self.eps * b
+                M[z][z2] = params.Rb * params.eps * b
             if b > 0 and q == 0:
                 # Busy worker finishes, add an idle worker
                 z2 = get_index(b-1, i+1, s, q)
-                M[z][z2] = self.Rb * self.eps * b
+                M[z][z2] = params.Rb * params.eps * b
             if s > 0 and q > 0:
                 # Starting worker ready, pick up a task
                 z2 = get_index(b+1, i, s-1, q-1)
-                M[z][z2] = self.Rs * self.eps * s
+                M[z][z2] = params.Rs * params.eps * s
             if s > 0 and q == 0:
                 # Starting worker ready, add an idle worker
                 z2 = get_index(b, i+1, s-1, q)
-                M[z][z2] = self.Rs * self.eps * s
+                M[z][z2] = params.Rs * params.eps * s
             if i > 0:
                 # New task arrives, idle worker picks up new task
                 z2 = get_index(b+1, i-1, s, q)
-                M[z][z2] = self.Ra * self.eps
-            if i == 0 and q < self.max_queue_size:
+                M[z][z2] = params.Ra * params.eps
+            if i == 0 and q < params.max_queue_size:
                 # New task arrives, goes to queue
                 z2 = get_index(b, i, s, q+1)
-                M[z][z2] = self.Ra * self.eps
+                M[z][z2] = params.Ra * params.eps
 
         M = numpy.array(M)
 
@@ -83,11 +83,11 @@ class Data:
         assert self.M.min() >= 0.0 and self.M.max() <= 1.0
 
         # Precompute matrices for (u) starting a new worker (d) shutting down an idle worker
-        Pu = [[0.0] * self.S for i in range(self.S)]
-        Pd = [[0.0] * self.S for i in range(self.S)]
-        for b, i, s, q in self.iterate_indices():
+        Pu = [[0.0] * params.S for i in range(params.S)]
+        Pd = [[0.0] * params.S for i in range(params.S)]
+        for b, i, s, q in params.iterate_indices():
             z = get_index(b, i, s, q)
-            if b + i + s + q < self.max_n_workers:
+            if b + i + s + q < params.max_n_workers:
                 z2 = get_index(b, i, s+1, q)
                 Pu[z][z2] = 1.0
             if i > 0:
@@ -100,12 +100,12 @@ class Data:
         self.Pd = Pd + numpy.diag(1 - Pd.sum(axis=1))
 
         # Precompute number of each thing
-        Nb = [0] * self.S
-        Ni = [0] * self.S
-        Ns = [0] * self.S
-        Nq = [0] * self.S
-        Nf = [0] * self.S  # "system full" penalization
-        for b, i, s, q in self.iterate_indices():
+        Nb = [0] * params.S
+        Ni = [0] * params.S
+        Ns = [0] * params.S
+        Nq = [0] * params.S
+        Nf = [0] * params.S  # "system full" penalization
+        for b, i, s, q in params.iterate_indices():
             z = get_index(b, i, s, q)
             Nb[z] = b
             Ni[z] = i
@@ -113,14 +113,14 @@ class Data:
             Nq[z] = q
 
         # Penalize the state when we run out of busy workers and have to reject queue items
-        for b, i, s, q in self.iterate_indices():
-            if q == 0 and i > 0 and b + i + s == self.max_n_workers:
+        for b, i, s, q in params.iterate_indices():
+            if q == 0 and i > 0 and b + i + s == params.max_n_workers:
                 z = get_index(b, i, s, 0)
                 Nf[z] = 1
 
         # Penalize the state when the queue is full so we have to reject new queue items
-        for b, i, s, q in self.iterate_indices():
-            if q == self.max_queue_size:
+        for b, i, s, q in params.iterate_indices():
+            if q == params.max_queue_size:
                 Nf[z] = 1
 
         self.Nb = numpy.array(Nb)
@@ -130,7 +130,7 @@ class Data:
         self.Nf = numpy.array(Nf)
 
 
-def simulate(data, P, u, d, steps=1000):
+def simulate(params, data, P, u, d, steps=1000):
     Au = numpy.dot(numpy.diag(u), data.Pu) + numpy.diag(1 - u)
     Ad = numpy.dot(numpy.diag(d), data.Pd) + numpy.diag(1 - d)
 
@@ -147,68 +147,60 @@ def simulate(data, P, u, d, steps=1000):
     return P
 
 
-def optimize(data, P, alpha):
+def optimize(params, data, P, alpha):
     def objective(ud):
-        u = ud[:data.S]
-        d = ud[data.S:]
+        u = ud[:params.S]
+        d = ud[params.S:]
 
-        P2 = simulate(data, P, u, d)
+        P2 = simulate(params, data, P, u, d)
         queue_size = numpy.dot(P2, data.Nq)
         waste = numpy.dot(P2, data.Nb + data.Ni + data.Ns + data.Nf)
         return queue_size + alpha * waste
 
-    ud0 = numpy.ones(2 * data.S) * 1e-3
-    bounds = [(1e-3, 1.0)] * 2 * data.S
+    ud0 = numpy.ones(2 * params.S) * 1e-3
+    bounds = [(1e-3, 1.0)] * 2 * params.S
 
     ret = minimize(jit(objective), ud0, jac=jit(grad(objective)), bounds=bounds)
-    return ret.x[:data.S], ret.x[data.S:]
+    return ret.x[:params.S], ret.x[params.S:]
 
 
 @app.function(gpu="A100", image=image, timeout=900)
-def simulate_alpha(data, P, alpha):  # TODO(erikbern): don't send data over the wire
-    u, d = optimize(data, P, alpha)
-    P2 = simulate(data, P, u, d)
+def simulate_alpha(params, P, alpha):
+    data = Data(params)
+
+    u, d = optimize(params, data, P, alpha)
+    P2 = simulate(params, data, P, u, d)
     return P2
 
 
-@app.function(gpu="A100", image=image, timeout=900)
-def compute_starting_point(data):  # TODO(erikbern): don't send data over the wire
+@app.function(gpu="A100", image=image, timeout=3600)
+def compute_tradeoffs(params):
+    data = Data(params)
+
     # Generate initial probability distribution
-    P = numpy.ones(data.S) / data.S
+    P = numpy.ones(params.S) / params.S
 
     # Simulate extra many steps first
-    u = numpy.ones(data.S) * 1e-2
-    d = numpy.ones(data.S) * 1e-2
+    u = numpy.ones(params.S) * 1e-2
+    d = numpy.ones(params.S) * 1e-2
 
     print("Simulating lots of steps")
-    P = simulate(data, P, u, d, steps=10000)
+    P = simulate(params, data, P, u, d, steps=10000)
 
     print("Solving with alpha=1")
-    u, d = optimize(data, P, alpha=1.0)
+    u, d = optimize(params, data, P, alpha=1.0)
 
     print("Simulating again")
-    P = simulate(data, P, u, d, steps=10000)
-
-    return P
-
-
-@app.function(gpu="A100", image=image, timeout=3600)
-def compute_tradeoffs(Rb, Rs, Ra, eps=0.03):
-    data = Data(Rb, Rs, Ra, eps)
-    data.precompute()
-
-    # Compute a reasonably good starting point close enough to the equilibrium
-    # TODO(erikbern): no need to run this remotely?
-    P = compute_starting_point.remote(data)
+    P = simulate(params, data, P, u, d, steps=10000)
 
     # Compute a bunch of optimal policies trading off latency vs utilization
     tradeoff_curve = []
     alphas = numpy.exp(numpy.linspace(-7, 7, 50))
-    args = [(data, P, alpha) for alpha in alphas]
+    args = [(params, P, alpha) for alpha in alphas]
     for P2 in simulate_alpha.starmap(args):
         queue_size = numpy.dot(P2, data.Nq)
         waste = numpy.dot(P2, data.Nb + data.Ni + data.Ns + data.Nf)
-        latency = numpy.dot(P2, data.Nq) / data.Ra
+        latency = numpy.dot(P2, data.Nq) / params.Ra
         utilization = numpy.dot(P2, data.Nb) / numpy.dot(P2, data.Nb + data.Ni + data.Ns)
         print(f"{queue_size=:.4f} {waste=:.4f} {latency=:.4f} {utilization=:.4f}")
 
@@ -227,11 +219,11 @@ def compute_tradeoffs(Rb, Rs, Ra, eps=0.03):
 
 
 @app.function(image=image, timeout=3600)
-def plot(plot_data):
+def plot(plot_params):
     from matplotlib import pyplot, ticker
 
     pyplot.style.use("ggplot")
-    for Rs, tradeoff_curve in plot_data:
+    for Rs, tradeoff_curve in plot_params:
         ls = [l for l, u in tradeoff_curve]
         us = [100 * u for l, u in tradeoff_curve]
         pyplot.plot(ls, us, label=f"{Rs=}")
@@ -256,12 +248,11 @@ def run():
 
     params = []
     for Rs in [0.1, 0.3, 1.0, 3.0, 10.0]:
-        params.append((Rb, Rs, Ra, eps))
+        params.append(Params(Rb, Rs, Ra, eps))
 
     plot_data = []
-    for params, (tradeoff_curve) in zip(params, compute_tradeoffs.starmap(params)):
-        Rb, Rs, Ra, eps = params
-        plot_data.append((Rs, tradeoff_curve))
+    for params, (tradeoff_curve) in zip(params, compute_tradeoffs.map(params)):
+        plot_data.append((params.Rs, tradeoff_curve))
 
     png_data = plot.remote(plot_data)
     with open("tradeoff.png", "wb") as f:
