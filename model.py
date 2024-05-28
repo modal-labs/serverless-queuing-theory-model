@@ -1,39 +1,3 @@
-"""
-Utilization is a function of 4 things:
-
-- Inference time
-- Startup time
-- Request rate
-- Target latency
-
-If everything is Poisson / exponential, then the state space reduces to:
-
-1. Total number of starting servers
-2. Total number of busy servers
-3. Total number of idle servers
-4. Current queue size
-
-Actually you never have idle servers and a queue size at the same time
-
-These are unbounded but could be capped at 30 or something in practice
-
-In each step, we have the option to
-
-1. Add another server
-2. Shut down an idle server
-3. Do nothing, wait until next quanta
-
-We can encode these as 1, -1, or 0
-
-The "cost" of each step is the queue size plus (plus the number of busy servers?)
-
-I think we can simulate this as a Markov chain by:
-- Pick a random "policy"
-- Pick a random initial set of probabilities
-- Until convergence:
-  - Update all probabilities
-  - Update the policy
-"""
 import io
 import modal
 
