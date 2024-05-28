@@ -26,7 +26,6 @@ class Params:
         self.S = len(self.state_space_indices)
         print("Total size of state space:", self.S)
 
-
     def iterate_indices(self):
         for b in range(self.max_n_workers + 1):  # busy
             for i in range(self.max_n_workers + 1):  # idle
@@ -37,6 +36,7 @@ class Params:
                         if i > 0 and q > 0:  # Never idle workers and queue size
                             continue
                         yield b, i, s, q
+
 
 class Data:
     def __init__(self, params):
@@ -51,27 +51,27 @@ class Data:
             z = get_index(b, i, s, q)
             if b > 0 and q > 0:
                 # Busy worker finishes, there are more items in the queue
-                z2 = get_index(b, i, s, q-1)
+                z2 = get_index(b, i, s, q - 1)
                 M[z][z2] = params.Rb * params.eps * b
             if b > 0 and q == 0:
                 # Busy worker finishes, add an idle worker
-                z2 = get_index(b-1, i+1, s, q)
+                z2 = get_index(b - 1, i + 1, s, q)
                 M[z][z2] = params.Rb * params.eps * b
             if s > 0 and q > 0:
                 # Starting worker ready, pick up a task
-                z2 = get_index(b+1, i, s-1, q-1)
+                z2 = get_index(b + 1, i, s - 1, q - 1)
                 M[z][z2] = params.Rs * params.eps * s
             if s > 0 and q == 0:
                 # Starting worker ready, add an idle worker
-                z2 = get_index(b, i+1, s-1, q)
+                z2 = get_index(b, i + 1, s - 1, q)
                 M[z][z2] = params.Rs * params.eps * s
             if i > 0:
                 # New task arrives, idle worker picks up new task
-                z2 = get_index(b+1, i-1, s, q)
+                z2 = get_index(b + 1, i - 1, s, q)
                 M[z][z2] = params.Ra * params.eps
             if i == 0 and q < params.max_queue_size:
                 # New task arrives, goes to queue
-                z2 = get_index(b, i, s, q+1)
+                z2 = get_index(b, i, s, q + 1)
                 M[z][z2] = params.Ra * params.eps
 
         M = numpy.array(M)
@@ -89,10 +89,10 @@ class Data:
         for b, i, s, q in params.iterate_indices():
             z = get_index(b, i, s, q)
             if b + i + s + q < params.max_n_workers:
-                z2 = get_index(b, i, s+1, q)
+                z2 = get_index(b, i, s + 1, q)
                 Pu[z][z2] = 1.0
             if i > 0:
-                z2 = get_index(b, i-1, s, q)
+                z2 = get_index(b, i - 1, s, q)
                 Pd[z][z2] = 1.0
 
         Pu = numpy.array(Pu)
@@ -150,8 +150,8 @@ def simulate(params, data, P, u, d, steps=1000):
 
 def optimize(params, data, P, alpha):
     def objective(ud):
-        u = ud[:params.S]
-        d = ud[params.S:]
+        u = ud[: params.S]
+        d = ud[params.S :]
 
         P2 = simulate(params, data, P, u, d)
         queue_size = numpy.dot(P2, data.Nq)
@@ -162,7 +162,7 @@ def optimize(params, data, P, alpha):
     bounds = [(1e-3, 1.0)] * 2 * params.S
 
     ret = minimize(jit(objective), ud0, jac=jit(grad(objective)), bounds=bounds)
-    return ret.x[:params.S], ret.x[params.S:]
+    return ret.x[: params.S], ret.x[params.S :]
 
 
 @app.function(gpu="A100", image=image, timeout=900)
@@ -214,7 +214,7 @@ def compute_tradeoffs(params):
     for l, u in tradeoff_curve:
         if not any(l2 < l and u2 > u for l2, u2 in tradeoff_curve):
             tradeoff_curve_2.append((l, u))
-            
+
     tradeoff_curve_2.sort()
     return tradeoff_curve_2
 
@@ -259,7 +259,8 @@ def run():
     with open("tradeoff.png", "wb") as f:
         f.write(png_data)
 
-#for b, i, s, q in iterate_indices():
+
+# for b, i, s, q in iterate_indices():
 #    z = get_index(b, i, s, q)
 #    print(f"{b} {i} {s} {q} p: {P2[z]:6.2%} up: {u[z]:9.6f} down: {d[z]:9.6f}")
 #    for b2, i2, s2, q2 in iterate_indices():
