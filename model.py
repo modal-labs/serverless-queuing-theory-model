@@ -12,13 +12,14 @@ with image.imports():
 class Params:
     """Various matrices & arrays needed by the code."""
 
-    def __init__(self, Rb, Rs, Ra, eps, max_n_workers=15, max_queue_size=45):
+    def __init__(self, Rb, Rs, Ra, eps, max_n_workers=15, max_queue_size=45, queue_full_penalty=30.0):
         self.Rb = Rb
         self.Rs = Rs
         self.Ra = Ra
         self.eps = eps
         self.max_n_workers = max_n_workers
         self.max_queue_size = max_queue_size
+        self.queue_full_penalty = queue_full_penalty
         self.state_space_indices = {}
         for b, i, s, q in self.iterate_indices():
             self.state_space_indices[(b, i, s, q)] = len(self.state_space_indices)
@@ -154,7 +155,7 @@ def optimize(params, data, P, alpha):
 
         P2 = simulate(params, data, P, u, d)
         queue_size = numpy.dot(P2, data.Nq)
-        waste = numpy.dot(P2, data.Nb + data.Ni + data.Ns + data.Nf)
+        waste = numpy.dot(P2, data.Nb + data.Ni + data.Ns + data.Nf * params.queue_full_penalty)
         return queue_size + alpha * waste
 
     ud0 = numpy.ones(2 * params.S) * 1e-3
