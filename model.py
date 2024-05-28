@@ -9,87 +9,69 @@ with image.imports():
     from scipy.optimize import minimize
 
 
-N = 12
-
-def get_index(b, i, s, q):
-    assert 0 <= b < N
-    assert 0 <= i < N
-    assert 0 <= s < N
-    assert 0 <= q < N
-    assert  not (i > 0 and q > 0)
-    assert 0 <= N-1 + i - q < 2 * N - 1
-    return (N-1 + i - q) * N * N + b * N + s
-
-
-def invert_index(z):
-    s = z % N
-    b = (z // N) % N
-    qi = z // (N * N)
-    if qi >= N - 1:
-        i = qi - (N-1)
-        q = 0
-    else:
-        i = 0
-        q = (N-1) - qi
-    return b, i, s, q
-
-
-def iterate_indices():
-    for b in range(N):  # busy
-        for i in range(N):  # idle
-            for s in range(N):  # starting
-                for q in range(N):  # queue size
-                    if i > 0 and q > 0:  # Never idle workers and queue size
-                        continue
-                    yield b, i, s, q
-
-
-# Sanity check index calculations
-for b, i, s, q in iterate_indices():
-    z = get_index(b, i, s, q)
-    assert invert_index(z) == (b, i, s, q)
-
-# Total state space size
-S = N * N * (2 * N - 1)
-print(f"{N=} {S=}")
-
-
 class Data:
     """Various matrices & arrays needed by the code."""
 
-    def __init__(self, Rb, Rs, Ra, eps):
+    def __init__(self, Rb, Rs, Ra, eps, max_n_workers=10, max_queue_size=20):
         self.Rb = Rb
         self.Rs = Rs
         self.Ra = Ra
+        self.eps = eps
+        self.max_n_workers = max_n_workers
+        self.max_queue_size = max_queue_size
+        self.state_space_indices = {}
+
+    def iterate_indices(self):
+        for b in range(self.max_n_workers + 1):  # busy
+            for i in range(self.max_n_workers + 1):  # idle
+                for s in range(self.max_n_workers + 1):  # starting
+                    for q in range(self.max_queue_size + 1):  # queue size
+                        if b + i + s > self.max_n_workers:
+                            continue
+                        if i > 0 and q > 0:  # Never idle workers and queue size
+                            continue
+                        yield b, i, s, q
+                        
+    def precompute(self):
+        # TODO(erikbern): make this return a separate object
+
+        # Precompute state space
+        for b, i, s, q in self.iterate_indices():
+            self.state_space_indices[(b, i, s, q)] = len(self.state_space_indices)
+        self.S = len(self.state_space_indices)
+        print("Total size of state space:", self.S)
+
+        def get_index(b, i, s, q):
+            return self.state_space_indices[(b, i, s, q)]
 
         # Precompute transition probabilities
-        M = [[0.0] * S for i in range(S)]
-        for b, i, s, q in iterate_indices():
+        M = [[0.0] * self.S for i in range(self.S)]
+        for b, i, s, q in self.iterate_indices():
             z = get_index(b, i, s, q)
             if b > 0 and q > 0:
                 # Busy worker finishes, there are more items in the queue
                 z2 = get_index(b, i, s, q-1)
-                M[z][z2] = Rb * eps * b
-            if b > 0 and q == 0 and  i < N - 1:
+                M[z][z2] = self.Rb * self.eps * b
+            if b > 0 and q == 0:
                 # Busy worker finishes, add an idle worker
                 z2 = get_index(b-1, i+1, s, q)
-                M[z][z2] = Rb * eps * b
-            if s > 0 and q > 0 and b < N - 1:
+                M[z][z2] = self.Rb * self.eps * b
+            if s > 0 and q > 0:
                 # Starting worker ready, pick up a task
                 z2 = get_index(b+1, i, s-1, q-1)
-                M[z][z2] = Rs * eps * s
-            if s > 0 and q == 0 and i < N - 1:
+                M[z][z2] = self.Rs * self.eps * s
+            if s > 0 and q == 0:
                 # Starting worker ready, add an idle worker
                 z2 = get_index(b, i+1, s-1, q)
-                M[z][z2] = Rs * eps * s
-            if i > 0 and b < N - 1:
+                M[z][z2] = self.Rs * self.eps * s
+            if i > 0:
                 # New task arrives, idle worker picks up new task
                 z2 = get_index(b+1, i-1, s, q)
-                M[z][z2] = Ra * eps
-            if i == 0 and q < N - 1:
+                M[z][z2] = self.Ra * self.eps
+            if i == 0 and q < self.max_queue_size:
                 # New task arrives, goes to queue
                 z2 = get_index(b, i, s, q+1)
-                M[z][z2] = Ra * eps
+                M[z][z2] = self.Ra * self.eps
 
         M = numpy.array(M)
 
@@ -101,11 +83,11 @@ class Data:
         assert self.M.min() >= 0.0 and self.M.max() <= 1.0
 
         # Precompute matrices for (u) starting a new worker (d) shutting down an idle worker
-        Pu = [[0.0] * S for i in range(S)]
-        Pd = [[0.0] * S for i in range(S)]
-        for b, i, s, q in iterate_indices():
+        Pu = [[0.0] * self.S for i in range(self.S)]
+        Pd = [[0.0] * self.S for i in range(self.S)]
+        for b, i, s, q in self.iterate_indices():
             z = get_index(b, i, s, q)
-            if s < N - 1:
+            if b + i + s + q < self.max_n_workers:
                 z2 = get_index(b, i, s+1, q)
                 Pu[z][z2] = 1.0
             if i > 0:
@@ -118,12 +100,12 @@ class Data:
         self.Pd = Pd + numpy.diag(1 - Pd.sum(axis=1))
 
         # Precompute number of each thing
-        Nb = [0] * S
-        Ni = [0] * S
-        Ns = [0] * S
-        Nq = [0] * S
-        Nf = [0] * S  # "system full" penalization
-        for b, i, s, q in iterate_indices():
+        Nb = [0] * self.S
+        Ni = [0] * self.S
+        Ns = [0] * self.S
+        Nq = [0] * self.S
+        Nf = [0] * self.S  # "system full" penalization
+        for b, i, s, q in self.iterate_indices():
             z = get_index(b, i, s, q)
             Nb[z] = b
             Ni[z] = i
@@ -131,15 +113,14 @@ class Data:
             Nq[z] = q
 
         # Penalize the state when we run out of busy workers and have to reject queue items
-        for i in range(N):
-            for s in range(N):
-                z = get_index(N-1, i, s, 0)
+        for b, i, s, q in self.iterate_indices():
+            if q == 0 and i > 0 and b + i + s == self.max_n_workers:
+                z = get_index(b, i, s, 0)
                 Nf[z] = 1
 
         # Penalize the state when the queue is full so we have to reject new queue items
-        for b in range(N):
-            for s in range(N):
-                z = get_index(b, 0, s, N-1)
+        for b, i, s, q in self.iterate_indices():
+            if q == self.max_queue_size:
                 Nf[z] = 1
 
         self.Nb = numpy.array(Nb)
@@ -168,36 +149,36 @@ def simulate(data, P, u, d, steps=1000):
 
 def optimize(data, P, alpha):
     def objective(ud):
-        u = ud[:S]
-        d = ud[S:]
+        u = ud[:data.S]
+        d = ud[data.S:]
 
         P2 = simulate(data, P, u, d)
         queue_size = numpy.dot(P2, data.Nq)
         waste = numpy.dot(P2, data.Nb + data.Ni + data.Ns + data.Nf)
         return queue_size + alpha * waste
 
-    ud0 = numpy.ones(2 * S) * 1e-3
-    bounds = [(1e-3, 1.0)] * 2 * S
+    ud0 = numpy.ones(2 * data.S) * 1e-3
+    bounds = [(1e-3, 1.0)] * 2 * data.S
 
     ret = minimize(jit(objective), ud0, jac=jit(grad(objective)), bounds=bounds)
-    return ret.x[:S], ret.x[S:]
+    return ret.x[:data.S], ret.x[data.S:]
 
 
 @app.function(gpu="A100", image=image, timeout=900)
-def simulate_alpha(data, P, alpha):
+def simulate_alpha(data, P, alpha):  # TODO(erikbern): don't send data over the wire
     u, d = optimize(data, P, alpha)
     P2 = simulate(data, P, u, d)
     return P2
 
 
 @app.function(gpu="A100", image=image, timeout=900)
-def compute_starting_point(data):
+def compute_starting_point(data):  # TODO(erikbern): don't send data over the wire
     # Generate initial probability distribution
-    P = numpy.ones(S) / S
+    P = numpy.ones(data.S) / data.S
 
     # Simulate extra many steps first
-    u = numpy.ones(S) * 1e-2
-    d = numpy.ones(S) * 1e-2
+    u = numpy.ones(data.S) * 1e-2
+    d = numpy.ones(data.S) * 1e-2
 
     print("Simulating lots of steps")
     P = simulate(data, P, u, d, steps=10000)
@@ -207,17 +188,17 @@ def compute_starting_point(data):
 
     print("Simulating again")
     P = simulate(data, P, u, d, steps=10000)
-    print(P)
 
     return P
 
 
 @app.function(gpu="A100", image=image, timeout=3600)
 def compute_tradeoffs(Rb, Rs, Ra, eps=0.03):
-    # print(f"{Rb=} {Rs=} {Ra=}")
     data = Data(Rb, Rs, Ra, eps)
+    data.precompute()
 
     # Compute a reasonably good starting point close enough to the equilibrium
+    # TODO(erikbern): no need to run this remotely?
     P = compute_starting_point.remote(data)
 
     # Compute a bunch of optimal policies trading off latency vs utilization
@@ -252,7 +233,7 @@ def plot(plot_data):
     pyplot.style.use("ggplot")
     for Rs, tradeoff_curve in plot_data:
         ls = [l for l, u in tradeoff_curve]
-        us = [u for l, u in tradeoff_curve]
+        us = [100 * u for l, u in tradeoff_curve]
         pyplot.plot(ls, us, label=f"{Rs=}")
 
     pyplot.gca().yaxis.set_major_formatter(ticker.PercentFormatter())
@@ -270,7 +251,7 @@ def plot(plot_data):
 def run():
     Rb = 1.0  # busy -> finish rate (s^-1)
     Rs = 1.0  # starting -> ready rate (s^-1)
-    Ra = 10.0  # arrival rate (s^-1)
+    Ra = 1.0  # arrival rate (s^-1)
     eps = 0.01  # time quanta
 
     params = []
