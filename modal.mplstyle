@@ -5,7 +5,7 @@ patch.antialiased: True
 
 font.size: 10.0
 
-axes.facecolor: black
+axes.facecolor: 0d0f0a
 axes.edgecolor: white
 axes.linewidth: 1
 axes.grid: True
@@ -25,7 +25,7 @@ ytick.direction: out
 grid.color: aaaaaa
 grid.linestyle: :
 
-figure.facecolor: black
+figure.facecolor: 0d0f0a
 figure.edgecolor: 0.50
 
 text.color: white
