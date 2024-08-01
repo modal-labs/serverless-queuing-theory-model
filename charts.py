@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 import numpy
 from matplotlib import pyplot, dates as mdates
 
-pyplot.style.use("ggplot")
+pyplot.style.use("modal.mplstyle")
 
 # Start with just Poisson noise
 xs = [datetime(2024, 5, 22) + timedelta(minutes=i) for i in range(60 * 24)]
@@ -12,11 +12,11 @@ pyplot.plot(xs, rs, linewidth=0.3)
 pyplot.xlim(datetime(2024, 5, 22), datetime(2024, 5, 23))
 pyplot.ylim(0, 90)
 pyplot.xlabel("Time")
-pyplot.ylabel("reqs/min")
+pyplot.ylabel("requests per minute")
 pyplot.title("Number of requests per minute over a 24h period")
 pyplot.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
 pyplot.tight_layout()
-pyplot.savefig("static-day.png")
+pyplot.savefig("static-day.png", dpi=300)
 
 # Do a sine wave now
 xs = [datetime(2024, 5, 22) + timedelta(minutes=i) for i in range(3 * 60 * 24)]
@@ -28,11 +28,11 @@ pyplot.plot(xs, rs, linewidth=0.3)
 pyplot.xlim(datetime(2024, 5, 22), datetime(2024, 5, 25))
 pyplot.ylim(0, 120)
 pyplot.xlabel("Time")
-pyplot.ylabel("reqs/min")
+pyplot.ylabel("requests per minute")
 pyplot.title("Number of requests per minute over a 3 day period")
 pyplot.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
 pyplot.tight_layout()
-pyplot.savefig("sine-wave-day.png")
+pyplot.savefig("sine-wave-day.png", dpi=300)
 
 # Now do a separate one with over a month
 xs = [datetime(2024, 5, 1) + timedelta(minutes=i) for i in range(60 * 24 * 31)]
@@ -58,19 +58,19 @@ pyplot.figure(figsize=(16, 4))
 pyplot.plot(xs, rs, linewidth=0.3)
 pyplot.xlim(datetime(2024, 5, 1), datetime(2024, 6, 1))
 pyplot.xlabel("Timestamp")
-pyplot.ylabel("reqs/min")
+pyplot.ylabel("requests per minute")
 pyplot.title("Number of requests per minute over a month")
 pyplot.gca().xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
 pyplot.tight_layout()
-pyplot.savefig("dynamic-month.png")
+pyplot.savefig("dynamic-month.png", dpi=300)
 
 # Zoom in on the last day
 pyplot.figure(figsize=(16, 4))
 pyplot.plot(xs[-24*60:], rs[-24*60:], linewidth=0.3)
 pyplot.xlim(datetime(2024, 5, 31), datetime(2024, 6, 1))
 pyplot.xlabel("Timestamp")
-pyplot.ylabel("reqs/min")
+pyplot.ylabel("requests per minute")
 pyplot.title("Number of requests per minute over a 24h period")
-pyplot.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:M:%S"))
+pyplot.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
 pyplot.tight_layout()
-pyplot.savefig("dynamic-day.png")
+pyplot.savefig("dynamic-day.png", dpi=300)

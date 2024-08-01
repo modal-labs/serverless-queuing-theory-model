@@ -1,0 +1,30 @@
+patch.linewidth: 0.5
+patch.facecolor: 348ABD  # blue
+patch.edgecolor: EEEEEE
+patch.antialiased: True
+
+font.size: 10.0
+
+axes.facecolor: black
+axes.edgecolor: white
+axes.linewidth: 1
+axes.grid: True
+axes.titlesize: x-large
+axes.labelsize: large
+axes.labelcolor: white
+axes.axisbelow: True       # grid/ticks are below elements (e.g., lines, text)
+
+axes.prop_cycle: cycler('color', ['bef264', 'fde047', '6e47fd', 'add0e6', '4ade80', 'fffdd0', 'efbe7d', 'dddddd'])
+
+xtick.color: aaaaaa
+xtick.direction: out
+
+ytick.color: aaaaaa
+ytick.direction: out
+
+grid.color: aaaaaa
+grid.linestyle: :
+
+figure.facecolor: black
+figure.edgecolor: 0.50
+
