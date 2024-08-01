@@ -28,3 +28,4 @@ grid.linestyle: :
 figure.facecolor: black
 figure.edgecolor: 0.50
 
+text.color: white

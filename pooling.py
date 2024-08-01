@@ -2,7 +2,7 @@ from matplotlib import pyplot
 import numpy
 from datetime import datetime, timedelta
 
-pyplot.style.use("ggplot")
+pyplot.style.use("modal.mplstyle")
 
 xs = [datetime(2024, 5, 1) + timedelta(minutes=i) for i in range(60 * 24 * 31)]
 
@@ -52,4 +52,4 @@ axes[0].set_ylabel("Number of GPUs")
 
 axes[0].set_ylim([0, None])
 pyplot.tight_layout()
-pyplot.savefig("pooling.png")
+pyplot.savefig("pooling.png", dpi=300)
