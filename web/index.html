@@ -10,10 +10,16 @@
   <body>
     <main>
       <section class="controls">
+        <label for="requests-per-minute">
+          <span style="font-size: 0.93em; display: inline-block; width: 200px;">Requests/min: <span id="requests-per-minute-value" style="display: inline-block; min-width: 28px; text-align: right;">100</span></span>
+          <input id="requests-per-minute" type="range" min="0" max="1000" step="1" value="0" style="width: 300px; vertical-align: middle;" />
+        </label>
         <label for="execution-time">
           <span style="font-size: 0.93em; display: inline-block; width: 200px;">Execution time: <span id="execution-time-value" style="display: inline-block; min-width: 28px; text-align: right;">10</span></span>
           <input id="execution-time" type="range" min="0" max="1000" step="1" value="0" style="width: 300px; vertical-align: middle;" />
         </label>
+      </section>
+      <section class="controls">
         <label for="keepalive-time">
           <span style="font-size: 0.93em; display: inline-block; width: 200px;">Keepalive time: <span id="keepalive-time-value" style="display: inline-block; min-width: 28px; text-align: right;">60</span></span>
           <input id="keepalive-time" type="range" min="0" max="1000" step="1" value="0" style="width: 300px; vertical-align: middle;" />

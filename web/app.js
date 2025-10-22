@@ -146,8 +146,7 @@ function reshapeSumPerMinute(xsSeconds) {
   return out;
 }
 
-function generateData({ startDate, endDate, seed }) {
-  const baseRate = 100;
+function generateData({ startDate, endDate, seed, baseRate = 100 }) {
   const start = new Date(startDate);
   const end = new Date(endDate);
   const nMinutes = Math.floor((end - start) / 60000);
@@ -271,6 +270,25 @@ function secondsToSlider(sec) {
   return Math.round(t * SLIDER_MAX);
 }
 
+// Log-scale slider mapping for requests per minute (rpm in [1, 10000])
+const LOG_RPM_MIN = Math.log(1);
+const LOG_RPM_MAX = Math.log(10000);
+function sliderToRpm(v) {
+  const t = Number(v) / SLIDER_MAX;
+  const logVal = LOG_RPM_MIN + t * (LOG_RPM_MAX - LOG_RPM_MIN);
+  return Math.max(1, Math.round(Math.exp(logVal)));
+}
+function rpmToSlider(rpm) {
+  const clamped = Math.max(1, Math.min(10000, Number(rpm)));
+  const t = (Math.log(clamped) - LOG_RPM_MIN) / (LOG_RPM_MAX - LOG_RPM_MIN);
+  return Math.round(t * SLIDER_MAX);
+}
+function formatRpmHuman(rpm) {
+  const r = Math.round(rpm);
+  if (r >= 1000) return `${(r / 1000).toFixed(r % 1000 === 0 ? 0 : 1)}k`;
+  return String(r);
+}
+
 function formatSecondsHuman(totalSeconds) {
   const s = Math.max(1, Math.round(totalSeconds));
   if (s < 60) return `${s} s`;
@@ -316,6 +334,27 @@ function stackedAreaChart({ sel, timeseries, x, series, colors, yLabel, domainY 
     .ticks(d3.timeDay.every(1))
     .tickFormat(xTickFormatter);
   const yAxis = d3.axisLeft(yScale).ticks(5);
+
+  // Gridlines (drawn behind series)
+  const xGrid = d3.axisBottom(xScale)
+    .ticks(d3.timeDay.every(1))
+    .tickSize(-h)
+    .tickFormat("");
+  const yGrid = d3.axisLeft(yScale)
+    .ticks(5)
+    .tickSize(-w)
+    .tickFormat("");
+  g.append("g")
+    .attr("class", "grid grid-x")
+    .attr("transform", `translate(0,${h})`)
+    .call(xGrid)
+    .selectAll(".tick line").attr("stroke", "#a9afc3").attr("opacity", 0.15);
+  g.selectAll(".grid.grid-x .domain").remove();
+  g.append("g")
+    .attr("class", "grid grid-y")
+    .call(yGrid)
+    .selectAll(".tick line").attr("stroke", "#a9afc3").attr("opacity", 0.15);
+  g.selectAll(".grid.grid-y .domain").remove();
 
   const gx = g.append("g").attr("transform", `translate(0,${h})`).call(xAxis);
   gx.selectAll("text").attr("fill", "#a9afc3");
@@ -383,34 +422,51 @@ function run() {
 
 // Wire slider input -> update value labels and rerun chart
 function wireParameterControls() {
+  const r = document.getElementById('requests-per-minute');
   const e = document.getElementById('execution-time');
   const k = document.getElementById('keepalive-time');
   const c = document.getElementById('coldstart-time');
+  const rv = document.getElementById('requests-per-minute-value');
   const ev = document.getElementById('execution-time-value');
   const kv = document.getElementById('keepalive-time-value');
   const cv = document.getElementById('coldstart-time-value');
   // initialize slider knob positions from default seconds
+  if (r) r.value = String(rpmToSlider(100));
   if (e) e.value = String(secondsToSlider(10));
   if (k) k.value = String(secondsToSlider(60));
   if (c) c.value = String(secondsToSlider(60));
   const updateLabels = () => {
+    if (rv && r) rv.textContent = formatRpmHuman(sliderToRpm(r.value));
     if (ev && e) ev.textContent = formatSecondsHuman(sliderToSeconds(e.value));
     if (kv && k) kv.textContent = formatSecondsHuman(sliderToSeconds(k.value));
     if (cv && c) cv.textContent = formatSecondsHuman(sliderToSeconds(c.value));
+  };
+  const regenerateDataFromControls = () => {
+    const baseRate = sliderToRpm(r?.value ?? rpmToSlider(100));
+    demandData = generateData({ startDate: DEFAULT_START, endDate: DEFAULT_END, seed: DEFAULT_SEED, baseRate });
   };
   [e, k, c].forEach(input => {
     if (!input) return;
     input.addEventListener('input', () => { updateLabels(); run(); });
     input.addEventListener('change', () => { updateLabels(); run(); });
   });
+  if (r) {
+    r.addEventListener('input', () => { updateLabels(); regenerateDataFromControls(); run(); });
+    r.addEventListener('change', () => { updateLabels(); regenerateDataFromControls(); run(); });
+  }
   updateLabels();
 }
 
+const DEFAULT_START = new Date('2025-05-01');
+const DEFAULT_END = new Date('2025-05-08');
+const DEFAULT_SEED = 42;
+
 function init() {
-  console.log("setting data")
-  demandData = generateData({ startDate: new Date('2025-05-01'), endDate: new Date('2025-05-08'), seed: 42 });
-  console.log("demandData", demandData);
   wireParameterControls();
+  // Initial demand generation based on current slider state
+  const r = document.getElementById('requests-per-minute');
+  const baseRate = sliderToRpm(r?.value ?? rpmToSlider(100));
+  demandData = generateData({ startDate: DEFAULT_START, endDate: DEFAULT_END, seed: DEFAULT_SEED, baseRate });
   run();
 }
 
