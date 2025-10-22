@@ -88,8 +88,8 @@ function rollingSum(xs, window) {
   return out;
 }
 
-function rollingMax(xs, window) {
-  // sliding window min/max via deque (O(n))
+function rollingExtrema(xs, window, cmp) {
+  // General sliding window extrema via deque (O(n))
   const n = xs.length;
   const out = new Float64Array(n);
   const deq = []; // store indices
@@ -99,7 +99,8 @@ function rollingMax(xs, window) {
     const val = padded[i];
     while (deq.length) {
       const backVal = padded[deq[deq.length - 1]];
-      if (backVal <= val) deq.pop(); else break;
+      // cmp is a comparison function: (a, b) => a <= b for max, a >= b for min
+      if (cmp(backVal, val)) deq.pop(); else break;
     }
     deq.push(i);
     const start = i - window + 1;
@@ -110,6 +111,16 @@ function rollingMax(xs, window) {
     }
   }
   return out;
+}
+
+function rollingMax(xs, window) {
+  // Largest value in window
+  return rollingExtrema(xs, window, (a, b) => a <= b);
+}
+
+function rollingMin(xs, window) {
+  // Smallest value in window
+  return rollingExtrema(xs, window, (a, b) => a >= b);
 }
 
 function reshapeMeanPerMinute(xsSeconds) {
@@ -136,6 +147,7 @@ function reshapeSumPerMinute(xsSeconds) {
 }
 
 function generateData({ startDate, endDate, seed }) {
+  const baseRate = 100;
   const start = new Date(startDate);
   const end = new Date(endDate);
   const nMinutes = Math.floor((end - start) / 60000);
@@ -144,7 +156,7 @@ function generateData({ startDate, endDate, seed }) {
   const random = makeRng(seed);
 
   // base rate with daily and weekly sin components
-  let ls = new Float64Array(nMinutes).fill(20);
+  let ls = new Float64Array(nMinutes).fill(baseRate);
   for (let i = 0; i < nMinutes; i++) {
     const daily = Math.sin((js[i] / (60 * 24)) * 2 * Math.PI) * 0.67 + 1;
     const weekly = Math.sin((js[i] / (60 * 24 * 7)) * 2 * Math.PI) * 0.2 + 1;
@@ -180,32 +192,38 @@ function generateData({ startDate, endDate, seed }) {
 let demandData = null;
 
 function simulate({xsMinutes, rsSeconds, executionTime = 10, keepaliveTime = 60, coldStartTime = 60 }) {
+  const nSeconds = rsSeconds.length;
+
   // Compute total number of busy containers
   const nBusySeconds = rollingSum(rsSeconds, executionTime);
 
-  // Compute total number of draining containers
+  // Now, let's simulate all the containers
+  // We don't know how many buffer containers we have, so we're going to treat cold starting containers as available
+  // Then, we're going to set the buffer to the 95th percentile of cold starting containers
+
+  // First, let's compute the number of draining containers
   const nBusyAndDrainingSeconds = rollingMax(nBusySeconds, keepaliveTime);
-  const nDrainingSeconds = new Float64Array(nBusySeconds.length);
-  for (let i = 0; i < nDrainingSeconds.length; i++) nDrainingSeconds[i] = nBusyAndDrainingSeconds[i] - nBusySeconds[i];
+  const nDrainingSeconds = new Float64Array(nSeconds);
+  for (let i = 0; i < nSeconds; i++) nDrainingSeconds[i] = nBusyAndDrainingSeconds[i] - nBusySeconds[i];
 
-  // Compute total number of containers that need to start each second
-  const nColdStartingRightNowSeconds = new Float64Array(nBusySeconds.length);
-  for (let i = 1; i < nColdStartingRightNowSeconds.length; i++) nColdStartingRightNowSeconds[i] = Math.max(0, nBusyAndDrainingSeconds[i] - nBusyAndDrainingSeconds[i - 1]);
+  // Now, let's compute the number of containers started in <= coldStartTime seconds
+  const minNBusySeconds = rollingMin(nBusySeconds, coldStartTime);
+  const nNewContainersSeconds = new Float64Array(nSeconds);
+  for (let i = 0; i < nSeconds; i++) nNewContainersSeconds[i] = nBusySeconds[i] - minNBusySeconds[i];
 
-  // Compute the total number of cold starting container
-  // This ignores the buffer
-  const nColdStartingIgnoringBufferSeconds = rollingMax(nColdStartingRightNowSeconds, coldStartTime);
-
-  // percentile 99 of cold starting
-  const sorted = Array.from(nColdStartingIgnoringBufferSeconds).sort((a, b) => a - b);
-  const idx = Math.min(sorted.length - 1, Math.floor(0.99 * sorted.length));
+  // Now, let's compute the required buffer size. This is the 95th percentile of the number of new containers started in <= coldStartTime seconds
+  const sorted = Array.from(nNewContainersSeconds).sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.floor(0.95 * sorted.length));
   const nBufferContainers = sorted[idx];
-  const nColdStartingSeconds = new Float64Array(nColdStartingIgnoringBufferSeconds.length);
-  for (let i = 0; i < nColdStartingSeconds.length; i++) nColdStartingSeconds[i] = Math.min(nColdStartingIgnoringBufferSeconds[i], nBufferContainers);
 
-  // buffer and total seconds series
-  const nBufferSeconds = new Float64Array(nBusySeconds.length);
-  for (let i = 0; i < nBufferSeconds.length; i++) nBufferSeconds[i] = nBufferContainers - nColdStartingSeconds[i];
+  // Now, let's compute the buffer size over time
+  const nBufferSeconds = new Float64Array(nSeconds);
+  for (let i = 0; i < nSeconds; i++) nBufferSeconds[i] = nBufferContainers - nNewContainersSeconds[i];
+
+  // The number of cold starting containers is the same as the number of new containers
+  const nColdStartingSeconds = nNewContainersSeconds;
+
+  // Add up for total time series
   const nTotalSeconds = new Float64Array(nBusySeconds.length);
   for (let i = 0; i < nTotalSeconds.length; i++) nTotalSeconds[i] = nBusySeconds[i] + nDrainingSeconds[i] + nColdStartingSeconds[i] + nBufferSeconds[i];
 
@@ -390,7 +408,7 @@ function wireParameterControls() {
 
 function init() {
   console.log("setting data")
-  demandData = generateData({ startDate: new Date('2025-05-01'), endDate: new Date('2025-05-03'), seed: 42 });
+  demandData = generateData({ startDate: new Date('2025-05-01'), endDate: new Date('2025-05-08'), seed: 42 });
   console.log("demandData", demandData);
   wireParameterControls();
   run();

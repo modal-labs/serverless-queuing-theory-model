@@ -8,11 +8,6 @@
     <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
   </head>
   <body>
-    <header>
-      <h1>Serverless Queuing Theory Model (Browser)</h1>
-      <p>Port of <code>cost_estimator.py</code> to JavaScript with D3 charts.</p>
-    </header>
-
     <main>
       <section class="controls">
         <label for="execution-time">
@@ -30,13 +25,15 @@
       </section>
 
       <section>
-        <h2>Number of containers (stacked)</h2>
-        <div id="chart-number-containers" class="chart"></div>
         <p class="metric">
           <span id="total-cost"></span>
           <span id="utilization-rate"></span>
           <span id="buffer-containers"></span>
         </p>
+      </section>
+
+      <section>
+        <div id="chart-number-containers" class="chart"></div>
       </section>
 
     <script type="module" src="app.js"></script>
