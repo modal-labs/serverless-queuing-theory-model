@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Serverless Queuing Theory Model (JS)</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  </head>
+  <body>
+    <header>
+      <h1>Serverless Queuing Theory Model (Browser)</h1>
+      <p>Port of <code>cost_estimator.py</code> to JavaScript with D3 charts.</p>
+    </header>
+
+    <main>
+      <section class="controls">
+        <label for="execution-time">
+          <span style="font-size: 0.93em; display: inline-block; width: 200px;">Execution time: <span id="execution-time-value" style="display: inline-block; min-width: 28px; text-align: right;">10</span></span>
+          <input id="execution-time" type="range" min="0" max="1000" step="1" value="0" style="width: 300px; vertical-align: middle;" />
+        </label>
+        <label for="keepalive-time">
+          <span style="font-size: 0.93em; display: inline-block; width: 200px;">Keepalive time: <span id="keepalive-time-value" style="display: inline-block; min-width: 28px; text-align: right;">60</span></span>
+          <input id="keepalive-time" type="range" min="0" max="1000" step="1" value="0" style="width: 300px; vertical-align: middle;" />
+        </label>
+        <label for="coldstart-time">
+          <span style="font-size: 0.93em; display: inline-block; width: 200px;">Cold start time: <span id="coldstart-time-value" style="display: inline-block; min-width: 28px; text-align: right;">60</span></span>
+          <input id="coldstart-time" type="range" min="0" max="1000" step="1" value="0" style="width: 300px; vertical-align: middle;" />
+        </label>
+      </section>
+
+      <section>
+        <h2>Number of containers (stacked)</h2>
+        <div id="chart-number-containers" class="chart"></div>
+        <p class="metric">
+          <span id="total-cost"></span>
+          <span id="utilization-rate"></span>
+          <span id="buffer-containers"></span>
+        </p>
+      </section>
+
+    <script type="module" src="app.js"></script>
+  </body>
+  </html>
+
+
