@@ -187,7 +187,7 @@ function generateData({ startDate, endDate, seed, baseRate = 100 }) {
 
 let demandData = null;
 
-function simulate({xsByMinute, rsBySecond, executionTime = 10, keepaliveTime = 60, coldStartTime = 60, nBufferContainers = 0 }) {
+function simulate({xsByMinute, rsBySecond, executionTime = 10, keepaliveTime = 60, coldStartTime = 60, nBufferContainers = 0, nWarmContainers = 0 }) {
   const nSeconds = rsBySecond.length;
 
   // initialize empty arrays
@@ -230,10 +230,6 @@ function simulate({xsByMinute, rsBySecond, executionTime = 10, keepaliveTime = 6
       busyContainers.push(requests[requestsJ++]);
       idleContainers.pop(); // Remove the last idle container
     }
-    // Shut down idle containers
-    while (idleContainers.length > idleJ && idleContainers[idleJ] + keepaliveTime < i) {
-      idleJ++;
-    }
     // Compute container counts
     const nIdleContainers = idleContainers.length - idleJ;
     const nBusyContainers = busyContainers.length - busyJ;
@@ -249,8 +245,17 @@ function simulate({xsByMinute, rsBySecond, executionTime = 10, keepaliveTime = 6
 
     // Start new containers based on queue size
     const queueSize = requests.length - requestsJ;
-    for (let z = 0; z < queueSize - nTotalContainers; z++) {
+    const nDesiredTotalContainers = Math.max(nWarmContainers, nBusyContainers + queueSize + nBufferContainers);
+    const nDesiredNewContainers = nDesiredTotalContainers - nTotalContainers;
+    let nDesiredShutdownContainers = -nDesiredNewContainers;
+    for (let z = 0; z < nDesiredNewContainers; z++) {
       coldStartingContainers.push(i);
+    }
+
+    // Shut down idle containers
+    while (idleContainers.length > idleJ && idleContainers[idleJ] + keepaliveTime < i && nDesiredShutdownContainers > 0) {
+      idleJ++;
+      nDesiredShutdownContainers--;
     }
   }
 
@@ -258,7 +263,6 @@ function simulate({xsByMinute, rsBySecond, executionTime = 10, keepaliveTime = 6
   const nBusyPerMinute = reshapeMeanPerMinute(nBusyBySecond);
   const nIdlePerMinute = reshapeMeanPerMinute(nIdleBySecond);
   const nColdStartingPerMinute = reshapeMeanPerMinute(nColdStartingBySecond);
-  const nBufferPerMinute = reshapeMeanPerMinute(nBufferBySecond);
   const nTotalPerMinute = reshapeMeanPerMinute(nTotalBySecond);
 
   // build minute-level stacked data
@@ -268,14 +272,10 @@ function simulate({xsByMinute, rsBySecond, executionTime = 10, keepaliveTime = 6
     busy: nBusyPerMinute[i],
     draining: nIdlePerMinute[i],
     cold: nColdStartingPerMinute[i],
-    buffer: nBufferPerMinute[i],
     total: nTotalPerMinute[i],
   })).slice(24 * 60);
 
-  return {
-    nBufferContainers,
-    timeseries,
-  };
+  return timeseries;
 }
 
 function mean(arr) {
@@ -414,18 +414,18 @@ function run() {
   const keepaliveTime = sliderToSeconds(document.getElementById('keepalive-time')?.value ?? secondsToSlider(60));
   const coldStartTime = sliderToSeconds(document.getElementById('coldstart-time')?.value ?? secondsToSlider(60));
   const nBufferContainers = Number(document.getElementById('buffer-containers')?.value ?? 0);
+  const nWarmContainers = Number(document.getElementById('warm-containers')?.value ?? 0);
   const {xsByMinute, rsBySecond} = demandData;
-  const simulatedData = simulate({ xsByMinute, rsBySecond, executionTime, keepaliveTime, coldStartTime, nBufferContainers });
-  const { timeseries } = simulatedData;
+  const simulatedData = simulate({ xsByMinute, rsBySecond, executionTime, keepaliveTime, coldStartTime, nBufferContainers, nWarmContainers });
+  const timeseries = simulatedData;
   console.log(timeseries);
 
   const series = [
     { key: 'busy', label: 'Busy containers' },
     { key: 'draining', label: 'Draining containers' },
     { key: 'cold', label: 'Cold starting containers' },
-    { key: 'buffer', label: 'Buffer containers' },
   ];
-  const colors = ['#bef264','#6e47fd','#fde047','#add0e6'];
+  const colors = ['#bef264','#6e47fd','#fde047'];
   stackedAreaChart({ sel: '#chart-number-containers', timeseries, x: d => d.date, series, colors: colors, yLabel: 'number of containers' });
 
   // Compute total cost over the selected period
@@ -454,29 +454,33 @@ function wireParameterControls() {
   const k = document.getElementById('keepalive-time');
   const c = document.getElementById('coldstart-time');
   const b = document.getElementById('buffer-containers');
+  const w = document.getElementById('warm-containers');
   const rv = document.getElementById('requests-per-minute-value');
   const ev = document.getElementById('execution-time-value');
   const kv = document.getElementById('keepalive-time-value');
   const cv = document.getElementById('coldstart-time-value');
   const bv = document.getElementById('buffer-containers-value');
+  const wv = document.getElementById('warm-containers-value');
   // initialize slider knob positions from defaults
   if (r) r.value = String(rpmToSlider(100));
   if (e) e.value = String(secondsToSlider(10));
   if (k) k.value = String(secondsToSlider(60));
   if (c) c.value = String(secondsToSlider(60));
   if (b) b.value = String(0);
+  if (w) w.value = String(0);
   const updateLabels = () => {
     if (rv && r) rv.textContent = formatRpmHuman(sliderToRpm(r.value));
     if (ev && e) ev.textContent = formatSecondsHuman(sliderToSeconds(e.value));
     if (kv && k) kv.textContent = formatSecondsHuman(sliderToSeconds(k.value));
     if (cv && c) cv.textContent = formatSecondsHuman(sliderToSeconds(c.value));
     if (bv && b) bv.textContent = String(Math.round(b.value));
+    if (wv && w) wv.textContent = String(Math.round(w.value));
   };
   const regenerateDataFromControls = () => {
     const baseRate = sliderToRpm(r?.value ?? rpmToSlider(100));
     demandData = generateData({ startDate: DEFAULT_START, endDate: DEFAULT_END, seed: DEFAULT_SEED, baseRate });
   };
-  [e, k, c, b].forEach(input => {
+  [e, k, c, b, w].forEach(input => {
     if (!input) return;
     input.addEventListener('input', () => { updateLabels(); run(); });
     input.addEventListener('change', () => { updateLabels(); run(); });
