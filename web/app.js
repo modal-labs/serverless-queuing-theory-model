@@ -190,7 +190,7 @@ function generateData({ startDate, endDate, seed, baseRate = 100 }) {
 
 let demandData = null;
 
-function simulate({xsMinutes, rsSeconds, executionTime = 10, keepaliveTime = 60, coldStartTime = 60 }) {
+function simulate({xsMinutes, rsSeconds, executionTime = 10, keepaliveTime = 60, coldStartTime = 60, nBufferContainers = 0 }) {
   const nSeconds = rsSeconds.length;
 
   // Compute total number of busy containers
@@ -213,8 +213,8 @@ function simulate({xsMinutes, rsSeconds, executionTime = 10, keepaliveTime = 60,
   // Now, let's compute the required buffer size. This is the nth percentile of the number of new containers started in <= coldStartTime seconds
   const sorted = Array.from(nNewContainersSeconds).sort((a, b) => a - b);
   const idx = Math.min(sorted.length - 1, Math.floor(0.99 * sorted.length));
-  const nBufferContainers = Math.ceil(sorted[idx] * 1.5);
-
+  // const nBufferContainers = Math.ceil(sorted[idx] * 1.5);
+  
   // Now, let's compute the buffer size over time
   const nBufferSeconds = new Float64Array(nSeconds);
   for (let i = 0; i < nSeconds; i++) nBufferSeconds[i] = Math.max(0, nBufferContainers - nNewContainersSeconds[i]);
@@ -384,9 +384,10 @@ function run() {
   const executionTime = sliderToSeconds(document.getElementById('execution-time')?.value ?? secondsToSlider(10));
   const keepaliveTime = sliderToSeconds(document.getElementById('keepalive-time')?.value ?? secondsToSlider(60));
   const coldStartTime = sliderToSeconds(document.getElementById('coldstart-time')?.value ?? secondsToSlider(60));
+  const nBufferContainers = Number(document.getElementById('buffer-containers')?.value ?? 0);
   const {xsMinutes, rsSeconds} = demandData;
-  const simulatedData = simulate({ xsMinutes, rsSeconds, executionTime, keepaliveTime, coldStartTime });
-  const { timeseries, nBufferContainers } = simulatedData;
+  const simulatedData = simulate({ xsMinutes, rsSeconds, executionTime, keepaliveTime, coldStartTime, nBufferContainers });
+  const { timeseries } = simulatedData;
 
   const series = [
     { key: 'busy', label: 'Busy containers' },
@@ -414,11 +415,6 @@ function run() {
   if (utilEl) {
     utilEl.textContent = ` · Utilization: ${(utilizationRate * 100).toFixed(1)}%`;
   }
-
-  const bufferEl = document.getElementById('buffer-containers');
-  if (bufferEl) {
-    bufferEl.textContent = ` · Buffer containers: ${nBufferContainers}`;
-  }
 }
 
 // Wire slider input -> update value labels and rerun chart
@@ -427,26 +423,30 @@ function wireParameterControls() {
   const e = document.getElementById('execution-time');
   const k = document.getElementById('keepalive-time');
   const c = document.getElementById('coldstart-time');
+  const b = document.getElementById('buffer-containers');
   const rv = document.getElementById('requests-per-minute-value');
   const ev = document.getElementById('execution-time-value');
   const kv = document.getElementById('keepalive-time-value');
   const cv = document.getElementById('coldstart-time-value');
-  // initialize slider knob positions from default seconds
+  const bv = document.getElementById('buffer-containers-value');
+  // initialize slider knob positions from defaults
   if (r) r.value = String(rpmToSlider(100));
   if (e) e.value = String(secondsToSlider(10));
   if (k) k.value = String(secondsToSlider(60));
   if (c) c.value = String(secondsToSlider(60));
+  if (b) b.value = String(0);
   const updateLabels = () => {
     if (rv && r) rv.textContent = formatRpmHuman(sliderToRpm(r.value));
     if (ev && e) ev.textContent = formatSecondsHuman(sliderToSeconds(e.value));
     if (kv && k) kv.textContent = formatSecondsHuman(sliderToSeconds(k.value));
     if (cv && c) cv.textContent = formatSecondsHuman(sliderToSeconds(c.value));
+    if (bv && b) bv.textContent = String(Math.round(b.value));
   };
   const regenerateDataFromControls = () => {
     const baseRate = sliderToRpm(r?.value ?? rpmToSlider(100));
     demandData = generateData({ startDate: DEFAULT_START, endDate: DEFAULT_END, seed: DEFAULT_SEED, baseRate });
   };
-  [e, k, c].forEach(input => {
+  [e, k, c, b].forEach(input => {
     if (!input) return;
     input.addEventListener('input', () => { updateLabels(); run(); });
     input.addEventListener('change', () => { updateLabels(); run(); });
