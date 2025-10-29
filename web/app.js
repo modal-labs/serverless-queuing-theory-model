@@ -150,98 +150,127 @@ function generateData({ startDate, endDate, seed, baseRate = 100 }) {
   const start = new Date(startDate);
   const end = new Date(endDate);
   const nMinutes = Math.floor((end - start) / 60000);
-  const xsMinutes = dateRangeMinutes(start, end);
+  const xsByMinute = dateRangeMinutes(start, end);
   const js = range(nMinutes);
   const random = makeRng(seed);
 
   // base rate with daily and weekly sin components
-  let ls = new Float64Array(nMinutes).fill(baseRate);
+  let lsByMinute = new Float64Array(nMinutes).fill(baseRate);
   for (let i = 0; i < nMinutes; i++) {
     const daily = Math.sin((js[i] / (60 * 24)) * 2 * Math.PI) * 0.67 + 1;
     const weekly = Math.sin((js[i] / (60 * 24 * 7)) * 2 * Math.PI) * 0.2 + 1;
-    ls[i] *= daily * weekly;
+    lsByMinute[i] *= daily * weekly;
   }
 
   // mean-reverting in log-space
   const reversionStrength = 0.001;
   const volatility = 0.03;
   const phi = 1.0 - reversionStrength;
-  const series = new Float64Array(nMinutes);
+  const seriesByMinute = new Float64Array(nMinutes);
   for (let t = 1; t < nMinutes; t++) {
     const innovation = randnWith(random) * volatility;
-    series[t] = phi * series[t - 1] + innovation;
+    seriesByMinute[t] = phi * seriesByMinute[t - 1] + innovation;
   }
-  for (let i = 0; i < nMinutes; i++) ls[i] *= Math.exp(series[i]);
+  for (let i = 0; i < nMinutes; i++) lsByMinute[i] *= Math.exp(seriesByMinute[i]);
 
   // per-second lambda and Poisson events per second
-  const lsSeconds = repeatEach(ls, 60);
-  const nSeconds = lsSeconds.length;
-  const rsSeconds = new Float64Array(nSeconds);
-  for (let i = 0; i < nSeconds; i++) rsSeconds[i] = poissonWith(lsSeconds[i] / 60, random);
-
-  // per-minute requests
-  const rsPerMinute = reshapeSumPerMinute(rsSeconds);
+  const lsBySecond = repeatEach(lsByMinute, 60);
+  const nSeconds = lsBySecond.length;
+  const rsBySecond = new Float64Array(nSeconds);
+  for (let i = 0; i < nSeconds; i++) rsBySecond[i] = poissonWith(lsBySecond[i] / 60, random);
 
   return {
-    xsMinutes,
-    rsSeconds,
+    xsByMinute,
+    rsBySecond,
   }
 }
 
 let demandData = null;
 
-function simulate({xsMinutes, rsSeconds, executionTime = 10, keepaliveTime = 60, coldStartTime = 60, nBufferContainers = 0 }) {
-  const nSeconds = rsSeconds.length;
+function simulate({xsByMinute, rsBySecond, executionTime = 10, keepaliveTime = 60, coldStartTime = 60, nBufferContainers = 0 }) {
+  const nSeconds = rsBySecond.length;
 
-  // Compute total number of busy containers
-  const nBusySeconds = rollingSum(rsSeconds, executionTime);
+  // initialize empty arrays
+  const nBusyBySecond = new Float64Array(nSeconds);
+  const nIdleBySecond = new Float64Array(nSeconds);
+  const nColdStartingBySecond = new Float64Array(nSeconds);
+  const nTotalBySecond = new Float64Array(nSeconds);
+  const nBufferBySecond = new Float64Array(nSeconds);
 
-  // Now, let's simulate all the containers
-  // We don't know how many buffer containers we have, so we're going to treat cold starting containers as available
-  // Then, we're going to set the buffer to the nth percentile of cold starting containers
+  // Every container is in one of three states: cold starting, busy, idle
+  const coldStartingContainers = [];  // By what time they started
+  const busyContainers = [];  // By what time they started
+  const idleContainers = [];  // By what time they started
+  const requests = [];  // Queue of requests
 
-  // First, let's compute the number of draining containers
-  const nBusyAndDrainingSeconds = rollingMax(nBusySeconds, keepaliveTime);
-  const nDrainingSeconds = new Float64Array(nSeconds);
-  for (let i = 0; i < nSeconds; i++) nDrainingSeconds[i] = nBusyAndDrainingSeconds[i] - nBusySeconds[i];
+  // For all queues, we don't pop the front (due to JS array limitations), just use an index
+  let coldStartingJ = 0;
+  let busyJ = 0;
+  let idleJ = 0;
+  let requestsJ = 0;
 
-  // Now, let's compute the number of containers started in <= coldStartTime seconds
-  const minNBusySeconds = rollingMin(nBusySeconds, coldStartTime);
-  const nNewContainersSeconds = new Float64Array(nSeconds);
-  for (let i = 0; i < nSeconds; i++) nNewContainersSeconds[i] = nBusySeconds[i] - minNBusySeconds[i];
+  // Step through and simulate each second
+  for (let i = 0; i < nSeconds; i++) {
+    // Cold starting containers -> idle
+    while (coldStartingContainers.length > 0 && coldStartingContainers[coldStartingJ] + coldStartTime <= i) {
+      idleContainers.push(i);
+      coldStartingJ++;
+    }
+    // Finish busy containers
+    while (busyContainers.length > busyJ && busyContainers[busyJ] + executionTime < i) {
+      idleContainers.push(i);
+      busyJ++;
+    }
+    // Add new requests to queue
+    for (let z = 0; z < rsBySecond[i]; z++) {
+      requests.push(i);
+    }
+    // Assign requests to idle containers
+    while (requests.length > requestsJ && idleContainers.length > idleJ) {
+      busyContainers.push(requests[requestsJ++]);
+      idleContainers.pop(); // Remove the last idle container
+    }
+    // Shut down idle containers
+    while (idleContainers.length > idleJ && idleContainers[idleJ] + keepaliveTime < i) {
+      idleJ++;
+    }
+    // Compute container counts
+    const nIdleContainers = idleContainers.length - idleJ;
+    const nBusyContainers = busyContainers.length - busyJ;
+    const nColdStartingContainers = coldStartingContainers.length - coldStartingJ;
+    const nTotalContainers = nIdleContainers + nBusyContainers + nColdStartingContainers;
 
-  // Now, let's compute the required buffer size. This is the nth percentile of the number of new containers started in <= coldStartTime seconds
-  const sorted = Array.from(nNewContainersSeconds).sort((a, b) => a - b);
-  const idx = Math.min(sorted.length - 1, Math.floor(0.99 * sorted.length));
-  // const nBufferContainers = Math.ceil(sorted[idx] * 1.5);
-  
-  // Now, let's compute the buffer size over time
-  const nBufferSeconds = new Float64Array(nSeconds);
-  for (let i = 0; i < nSeconds; i++) nBufferSeconds[i] = Math.max(0, nBufferContainers - nNewContainersSeconds[i]);
+    // Write stats to arrays
+    nIdleBySecond[i] = nIdleContainers;
+    nBusyBySecond[i] = nBusyContainers;
+    nColdStartingBySecond[i] = nColdStartingContainers;
+    nTotalBySecond[i] = nTotalContainers;
+    nBufferBySecond[i] = nBufferContainers;  // for now
 
-  // The number of cold starting containers is the same as the number of new containers
-  const nColdStartingSeconds = nNewContainersSeconds;
-
-  // Add up for total time series
-  const nTotalSeconds = new Float64Array(nBusySeconds.length);
-  for (let i = 0; i < nTotalSeconds.length; i++) nTotalSeconds[i] = nBusySeconds[i] + nDrainingSeconds[i] + nColdStartingSeconds[i] + nBufferSeconds[i];
+    // Start new containers based on queue size
+    const queueSize = requests.length - requestsJ;
+    for (let z = 0; z < queueSize - nTotalContainers; z++) {
+      coldStartingContainers.push(i);
+    }
+  }
 
   // roll up by minutes (mean)
-  const nBusyPerMinute = reshapeMeanPerMinute(nBusySeconds);
-  const nDrainingPerMinute = reshapeMeanPerMinute(nDrainingSeconds);
-  const nColdStartingPerMinute = reshapeMeanPerMinute(nColdStartingSeconds);
-  const nBufferPerMinute = reshapeMeanPerMinute(nBufferSeconds);
-  const nTotalPerMinute = reshapeMeanPerMinute(nTotalSeconds);
+  const nBusyPerMinute = reshapeMeanPerMinute(nBusyBySecond);
+  const nIdlePerMinute = reshapeMeanPerMinute(nIdleBySecond);
+  const nColdStartingPerMinute = reshapeMeanPerMinute(nColdStartingBySecond);
+  const nBufferPerMinute = reshapeMeanPerMinute(nBufferBySecond);
+  const nTotalPerMinute = reshapeMeanPerMinute(nTotalBySecond);
 
   // build minute-level stacked data
-  const timeseries = xsMinutes.map((d, i) => ({
+  // Also trim the first 24 hours of data, which we treat as "warmup"
+  const timeseries = xsByMinute.map((d, i) => ({
     date: d,
     busy: nBusyPerMinute[i],
-    draining: nDrainingPerMinute[i],
+    draining: nIdlePerMinute[i],
     cold: nColdStartingPerMinute[i],
     buffer: nBufferPerMinute[i],
     total: nTotalPerMinute[i],
-  }));
+  })).slice(24 * 60);
 
   return {
     nBufferContainers,
@@ -385,9 +414,10 @@ function run() {
   const keepaliveTime = sliderToSeconds(document.getElementById('keepalive-time')?.value ?? secondsToSlider(60));
   const coldStartTime = sliderToSeconds(document.getElementById('coldstart-time')?.value ?? secondsToSlider(60));
   const nBufferContainers = Number(document.getElementById('buffer-containers')?.value ?? 0);
-  const {xsMinutes, rsSeconds} = demandData;
-  const simulatedData = simulate({ xsMinutes, rsSeconds, executionTime, keepaliveTime, coldStartTime, nBufferContainers });
+  const {xsByMinute, rsBySecond} = demandData;
+  const simulatedData = simulate({ xsByMinute, rsBySecond, executionTime, keepaliveTime, coldStartTime, nBufferContainers });
   const { timeseries } = simulatedData;
+  console.log(timeseries);
 
   const series = [
     { key: 'busy', label: 'Busy containers' },
