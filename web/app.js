@@ -198,7 +198,7 @@ function simulate({xsMinutes, rsSeconds, executionTime = 10, keepaliveTime = 60,
 
   // Now, let's simulate all the containers
   // We don't know how many buffer containers we have, so we're going to treat cold starting containers as available
-  // Then, we're going to set the buffer to the 95th percentile of cold starting containers
+  // Then, we're going to set the buffer to the nth percentile of cold starting containers
 
   // First, let's compute the number of draining containers
   const nBusyAndDrainingSeconds = rollingMax(nBusySeconds, keepaliveTime);
@@ -210,14 +210,14 @@ function simulate({xsMinutes, rsSeconds, executionTime = 10, keepaliveTime = 60,
   const nNewContainersSeconds = new Float64Array(nSeconds);
   for (let i = 0; i < nSeconds; i++) nNewContainersSeconds[i] = nBusySeconds[i] - minNBusySeconds[i];
 
-  // Now, let's compute the required buffer size. This is the 95th percentile of the number of new containers started in <= coldStartTime seconds
+  // Now, let's compute the required buffer size. This is the nth percentile of the number of new containers started in <= coldStartTime seconds
   const sorted = Array.from(nNewContainersSeconds).sort((a, b) => a - b);
-  const idx = Math.min(sorted.length - 1, Math.floor(0.95 * sorted.length));
-  const nBufferContainers = sorted[idx];
+  const idx = Math.min(sorted.length - 1, Math.floor(0.99 * sorted.length));
+  const nBufferContainers = Math.ceil(sorted[idx] * 1.5);
 
   // Now, let's compute the buffer size over time
   const nBufferSeconds = new Float64Array(nSeconds);
-  for (let i = 0; i < nSeconds; i++) nBufferSeconds[i] = nBufferContainers - nNewContainersSeconds[i];
+  for (let i = 0; i < nSeconds; i++) nBufferSeconds[i] = Math.max(0, nBufferContainers - nNewContainersSeconds[i]);
 
   // The number of cold starting containers is the same as the number of new containers
   const nColdStartingSeconds = nNewContainersSeconds;
@@ -394,7 +394,8 @@ function run() {
     { key: 'cold', label: 'Cold starting containers' },
     { key: 'buffer', label: 'Buffer containers' },
   ];
-  stackedAreaChart({ sel: '#chart-number-containers', timeseries, x: d => d.date, series, colors: ['#61d095','#6ea8fe','#9b8cf0','#ffd166'], yLabel: 'number of containers' });
+  const colors = ['#bef264','#6e47fd','#fde047','#add0e6'];
+  stackedAreaChart({ sel: '#chart-number-containers', timeseries, x: d => d.date, series, colors: colors, yLabel: 'number of containers' });
 
   // Compute total cost over the selected period
   const totalContainerMinutes = timeseries.reduce((acc, d) => acc + d.total, 0);
@@ -460,14 +461,27 @@ function wireParameterControls() {
 const DEFAULT_START = new Date('2025-05-01');
 const DEFAULT_END = new Date('2025-05-08');
 const DEFAULT_SEED = 42;
+let CURRENT_SEED = DEFAULT_SEED;
+
+function regenerateWithSeed(seed) {
+  const r = document.getElementById('requests-per-minute');
+  const baseRate = sliderToRpm(r?.value ?? rpmToSlider(100));
+  demandData = generateData({ startDate: DEFAULT_START, endDate: DEFAULT_END, seed, baseRate });
+  run();
+}
 
 function init() {
   wireParameterControls();
   // Initial demand generation based on current slider state
-  const r = document.getElementById('requests-per-minute');
-  const baseRate = sliderToRpm(r?.value ?? rpmToSlider(100));
-  demandData = generateData({ startDate: DEFAULT_START, endDate: DEFAULT_END, seed: DEFAULT_SEED, baseRate });
-  run();
+  CURRENT_SEED = DEFAULT_SEED;
+  regenerateWithSeed(CURRENT_SEED);
+  const regenBtn = document.getElementById('regenerate');
+  if (regenBtn) {
+    regenBtn.addEventListener('click', () => {
+      CURRENT_SEED = Math.floor(Math.random() * 0xFFFFFFFF);
+      regenerateWithSeed(CURRENT_SEED);
+    });
+  }
 }
 
 // Ensure controls are initialized before first render
