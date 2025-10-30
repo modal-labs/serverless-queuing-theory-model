@@ -135,13 +135,13 @@ function reshapeMeanPerMinute(xsSeconds) {
   return out;
 }
 
-function reshapeSumPerMinute(xsSeconds) {
-  const minutes = xsSeconds.length / 60;
-  const out = new Float64Array(minutes);
-  for (let m = 0; m < minutes; m++) {
+function reshapeSumPerHour(xsSeconds) {
+  const hours = xsSeconds.length / 3600;
+  const out = new Float64Array(hours);
+  for (let h = 0; h < hours; h++) {
     let s = 0;
-    for (let j = 0; j < 60; j++) s += xsSeconds[m * 60 + j];
-    out[m] = s;
+    for (let j = 0; j < 3600; j++) s += xsSeconds[h * 3600 + j];
+    out[h] = s;
   }
   return out;
 }
@@ -195,6 +195,7 @@ function simulate({xsByMinute, rsBySecond, executionTime = 10, keepaliveTime = 6
   const nIdleBySecond = new Float64Array(nSeconds);
   const nColdStartingBySecond = new Float64Array(nSeconds);
   const nTotalBySecond = new Float64Array(nSeconds);
+  const totalQueueTimeBySecond = new Float64Array(nSeconds);
 
   // Every container is in one of three states: cold starting, busy, idle
   const coldStartingContainers = [];  // By what time they started
@@ -226,7 +227,9 @@ function simulate({xsByMinute, rsBySecond, executionTime = 10, keepaliveTime = 6
     }
     // Assign requests to idle containers
     while (requests.length > requestsJ && idleContainers.length > idleJ) {
-      busyContainers.push(requests[requestsJ++]);
+      const requestI = requests[requestsJ++];
+      busyContainers.push(requestI);
+      totalQueueTimeBySecond[requestI] += i - requestI;
       idleContainers.pop(); // Remove the last idle container
     }
     // Compute container counts
@@ -262,10 +265,12 @@ function simulate({xsByMinute, rsBySecond, executionTime = 10, keepaliveTime = 6
   const nIdlePerMinute = reshapeMeanPerMinute(nIdleBySecond);
   const nColdStartingPerMinute = reshapeMeanPerMinute(nColdStartingBySecond);
   const nTotalPerMinute = reshapeMeanPerMinute(nTotalBySecond);
+  const totalQueueTimePerHour = reshapeSumPerHour(totalQueueTimeBySecond);
+  const totalRequestsPerHour = reshapeSumPerHour(rsBySecond);
 
-  // build minute-level stacked data
+  // build minute-level stacked data of containers.
   // Also trim the first 24 hours of data, which we treat as "warmup"
-  const timeseries = xsByMinute.map((d, i) => ({
+  const containers = xsByMinute.map((d, i) => ({
     date: d,
     busy: nBusyPerMinute[i],
     draining: nIdlePerMinute[i],
@@ -273,7 +278,19 @@ function simulate({xsByMinute, rsBySecond, executionTime = 10, keepaliveTime = 6
     total: nTotalPerMinute[i],
   })).slice(24 * 60);
 
-  return timeseries;
+  // build hour-level stacked data of queue stats
+  // Also trim the first 24 hours of data
+  const xsByHour = [];
+  for (let i = 0; i < xsByMinute.length; i += 60) {
+    xsByHour.push(xsByMinute[i]);
+  }
+  const queueStats = xsByHour.map((d, i) => ({
+    date: d,
+    queueTime: totalQueueTimePerHour[i],
+    requests: totalRequestsPerHour[i],
+  })).slice(24);
+
+  return { containers, queueStats };
 }
 
 function mean(arr) {
@@ -333,41 +350,45 @@ function clearChart(sel) {
   d3.select(sel).selectAll("*").remove();
 }
 
-
-function stackedAreaChart({ sel, timeseries, x, series, colors, yLabel, domainY }) {
+function stackedAreaWithRightLine({ sel, containers, x, series, colors, yLabelLeft, domainYLeft, lineData, lineY, yLabelRight, domainYRight }) {
   clearChart(sel);
   const container = d3.select(sel);
   const { width, height } = container.node().getBoundingClientRect();
-  const margin = { top: 24, right: 20, bottom: 36, left: 44 };
+  const margin = { top: 24, right: 44, bottom: 36, left: 44 };
   const w = width - margin.left - margin.right;
   const h = height - margin.top - margin.bottom;
 
   const svg = container.append("svg").attr("width", width).attr("height", height);
   const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
 
-  const xScale = d3.scaleTime().domain(d3.extent(timeseries, x)).range([0, w]);
+  const xScale = d3.scaleTime().domain(d3.extent(containers, x)).range([0, w]);
   const stack = d3.stack().keys(series.map(s => s.key));
-  const stackedData = stack(timeseries);
-  const maxY = d3.max(timeseries, d => d.busy) * 2;
-  const yScale = d3.scaleLinear().domain(domainY ?? [0, maxY]).nice().range([h, 0]);
+  const stackedData = stack(containers);
+  const maxYLeft = d3.max(containers, d => d.busy) * 2;
+  const yScaleLeft = d3.scaleLinear().domain(domainYLeft ?? [0, maxYLeft]).nice().range([h, 0]);
+
+  // const maxRight = lineData && lineData.length ? (d3.max(lineData, lineY) ?? 0) : 0;
+  const maxRight = 5;  // Use a fixed max so it doesn't rescale
+  const yScaleRight = d3.scaleLinear().domain(domainYRight ?? [0, maxRight]).nice().range([h, 0]);
 
   const area = d3.area()
     .x(d => xScale(x(d.data)))
-    .y0(d => yScale(d[0]))
-    .y1(d => yScale(d[1]));
+    .y0(d => yScaleLeft(d[0]))
+    .y1(d => yScaleLeft(d[1]));
 
   const xTickFormatter = d3.timeFormat("%b %-d");
   const xAxis = d3.axisBottom(xScale)
     .ticks(d3.timeDay.every(1))
     .tickFormat(xTickFormatter);
-  const yAxis = d3.axisLeft(yScale).ticks(5);
+  const yAxisLeft = d3.axisLeft(yScaleLeft).ticks(5);
+  const yAxisRight = d3.axisRight(yScaleRight).ticks(5);
 
-  // Gridlines (drawn behind series)
+  // Gridlines based on left axis
   const xGrid = d3.axisBottom(xScale)
     .ticks(d3.timeDay.every(1))
     .tickSize(-h)
     .tickFormat("");
-  const yGrid = d3.axisLeft(yScale)
+  const yGrid = d3.axisLeft(yScaleLeft)
     .ticks(5)
     .tickSize(-w)
     .tickFormat("");
@@ -386,9 +407,14 @@ function stackedAreaChart({ sel, timeseries, x, series, colors, yLabel, domainY 
   const gx = g.append("g").attr("transform", `translate(0,${h})`).call(xAxis);
   gx.selectAll("text").attr("fill", "#a9afc3");
   gx.selectAll(".domain, .tick line").attr("stroke", "#a9afc3").attr("opacity", 0.3);
-  g.append("g").call(yAxis).append("text")
+  g.append("g").call(yAxisLeft).append("text")
     .attr("fill", "currentColor").attr("x", 4).attr("y", -8)
-    .text(yLabel ?? "");
+    .text(yLabelLeft ?? "");
+  const gyRight = g.append("g").attr("transform", `translate(${w},0)`).call(yAxisRight);
+  gyRight.append("text")
+    .attr("fill", "currentColor").attr("x", -4).attr("y", -8)
+    .attr("text-anchor", "end")
+    .text(yLabelRight ?? "");
 
   series.forEach((s, i) => {
     g.append("path")
@@ -398,13 +424,30 @@ function stackedAreaChart({ sel, timeseries, x, series, colors, yLabel, domainY 
       .attr("d", area);
   });
 
-  // Simple legend
+  if (lineData && lineData.length) {
+    console.log(lineData);
+    const line = d3.line()
+      .x(d => xScale(x(d)))
+      .y(d => yScaleRight(lineY(d)));
+    g.append("path")
+      .datum(lineData)
+      .attr("fill", "none")
+      .attr("stroke", "#fff")
+      .attr("stroke-width", 2)
+      .attr("stroke-dasharray", "6,4")
+      .attr("d", line);
+  }
+
+  // Legend: stacked series + line
   const legend = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
   series.forEach((s, i) => {
     const row = legend.append("g").attr("transform", `translate(${i * 160 + 20},0)`);
     row.append("rect").attr("width", 12).attr("height", 12).attr("fill", colors[i] ?? `hsl(${i * 60}, 70%, 55%)`).attr("opacity", 0.6);
     row.append("text").attr("x", 16).attr("y", 10).attr("fill", "#a9afc3").attr("font-size", 12).text(s.label);
   });
+  const lineRow = legend.append("g").attr("transform", `translate(${series.length * 160 + 20},0)`);
+  lineRow.append("line").attr("x1", 0).attr("x2", 24).attr("y1", 6).attr("y2", 6).attr("stroke", "#fff").attr("stroke-width", 2).attr("stroke-dasharray", "6,4");
+  lineRow.append("text").attr("x", 28).attr("y", 10).attr("fill", "#a9afc3").attr("font-size", 12).text("Avg queue time");
 }
 
 function run() {
@@ -415,7 +458,7 @@ function run() {
   const nWarmContainers = Number(document.getElementById('warm-containers')?.value ?? 0);
   const {xsByMinute, rsBySecond} = demandData;
   const simulatedData = simulate({ xsByMinute, rsBySecond, executionTime, keepaliveTime, coldStartTime, nBufferContainers, nWarmContainers });
-  const timeseries = simulatedData;
+  const { containers, queueStats } = simulatedData;
 
   const series = [
     { key: 'busy', label: 'Busy containers' },
@@ -423,11 +466,26 @@ function run() {
     { key: 'cold', label: 'Cold starting containers' },
   ];
   const colors = ['#bef264','#6e47fd','#fde047'];
-  stackedAreaChart({ sel: '#chart-number-containers', timeseries, x: d => d.date, series, colors: colors, yLabel: 'number of containers' });
+  // Average queue time per request (skip minutes with zero requests)
+  const qprData = queueStats
+    .filter(t => t.requests > 0)
+    .map(t => ({ date: t.date, value: t.queueTime / t.requests }));
+
+  stackedAreaWithRightLine({
+    sel: '#chart-number-containers',
+    containers,
+    x: d => d.date,
+    series,
+    colors: colors,
+    yLabelLeft: 'number of containers',
+    lineData: qprData,
+    lineY: d => d.value,
+    yLabelRight: 'avg queue time (s)'
+  });
 
   // Compute total cost over the selected period
-  const totalContainerMinutes = timeseries.reduce((acc, d) => acc + d.total, 0);
-  const busyContainerMinutes = timeseries.reduce((acc, d) => acc + d.busy, 0);
+  const totalContainerMinutes = containers.reduce((acc, d) => acc + d.total, 0);
+  const busyContainerMinutes = containers.reduce((acc, d) => acc + d.busy, 0);
   const totalContainerHours = totalContainerMinutes / 60;
   const totalCost = totalContainerHours * CONTAINER_COST;
   const costEl = document.getElementById('total-cost');
