@@ -462,10 +462,10 @@ function run() {
 
   const series = [
     { key: 'busy', label: 'Busy containers' },
-    { key: 'draining', label: 'Draining containers' },
     { key: 'cold', label: 'Cold starting containers' },
+    { key: 'draining', label: 'Draining containers' },
   ];
-  const colors = ['#bef264','#6e47fd','#fde047'];
+  const colors = ['#bef264','#fde047','#6e47fd'];
   // Average queue time per request (skip minutes with zero requests)
   const qprData = queueStats
     .filter(t => t.requests > 0)
