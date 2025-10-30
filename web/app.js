@@ -195,7 +195,6 @@ function simulate({xsByMinute, rsBySecond, executionTime = 10, keepaliveTime = 6
   const nIdleBySecond = new Float64Array(nSeconds);
   const nColdStartingBySecond = new Float64Array(nSeconds);
   const nTotalBySecond = new Float64Array(nSeconds);
-  const nBufferBySecond = new Float64Array(nSeconds);
 
   // Every container is in one of three states: cold starting, busy, idle
   const coldStartingContainers = [];  // By what time they started
@@ -241,18 +240,17 @@ function simulate({xsByMinute, rsBySecond, executionTime = 10, keepaliveTime = 6
     nBusyBySecond[i] = nBusyContainers;
     nColdStartingBySecond[i] = nColdStartingContainers;
     nTotalBySecond[i] = nTotalContainers;
-    nBufferBySecond[i] = nBufferContainers;  // for now
 
     // Start new containers based on queue size
     const queueSize = requests.length - requestsJ;
-    const nDesiredTotalContainers = Math.max(nWarmContainers, nBusyContainers + queueSize + nBufferContainers);
+    const nDesiredTotalContainers = Math.max(nWarmContainers + nColdStartingContainers, nBusyContainers + queueSize + nBufferContainers);
     const nDesiredNewContainers = nDesiredTotalContainers - nTotalContainers;
     let nDesiredShutdownContainers = -nDesiredNewContainers;
     for (let z = 0; z < nDesiredNewContainers; z++) {
       coldStartingContainers.push(i);
     }
 
-    // Shut down idle containers
+    // Shut down idle containers if we're above the desired total
     while (idleContainers.length > idleJ && idleContainers[idleJ] + keepaliveTime < i && nDesiredShutdownContainers > 0) {
       idleJ++;
       nDesiredShutdownContainers--;
@@ -418,7 +416,6 @@ function run() {
   const {xsByMinute, rsBySecond} = demandData;
   const simulatedData = simulate({ xsByMinute, rsBySecond, executionTime, keepaliveTime, coldStartTime, nBufferContainers, nWarmContainers });
   const timeseries = simulatedData;
-  console.log(timeseries);
 
   const series = [
     { key: 'busy', label: 'Busy containers' },
